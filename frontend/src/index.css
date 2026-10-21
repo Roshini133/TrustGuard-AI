@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+body { @apply bg-page text-ink antialiased; }
+@layer components {
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-primary { @apply btn bg-primary text-white hover:bg-primary-dark; }
+  .btn-secondary { @apply btn border border-line bg-white text-primary-dark hover:bg-primary-light; }
+  .btn-danger { @apply btn bg-crit text-white hover:bg-red-700; }
+  .input { @apply w-full rounded-lg border border-line bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:bg-slate-50; }
+  .card { @apply rounded-xl border border-line bg-white shadow-card; }
+  .th { @apply whitespace-nowrap bg-primary-light px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-primary-dark; }
+  .td { @apply border-t border-line px-3 py-2 text-sm; }
+}
+@media (prefers-reduced-motion: no-preference) { .fade-in { animation: fade .25s ease-out; } }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }

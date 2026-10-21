@@ -1,0 +1,95 @@
+# Render Blueprint — New + > Blueprint > select this repository.
+# Secrets marked `sync: false` are prompted for in the dashboard and are NEVER committed.
+#
+# IMPORTANT architecture notes
+#  * Uploads/models live in S3-compatible object storage (ARTIFACT_STORAGE_BACKEND=s3) because a Render disk can only be
+#    attached to ONE service and the API and the worker must both read the same files.
+#  * The frontend (nginx) proxies /api to the API over Render's private network, so the browser only talks to one origin
+#    (first-party SameSite=Lax cookies; no cross-site cookie or wildcard-CORS problems).
+#  * After the first deploy, set FRONTEND_URL / BACKEND_URL / CORS_ORIGINS to the real public URL of the `trustguard-web`
+#    service (or your custom domain) and redeploy trustguard-api.
+#  * Plans: the Postgres `free` plan EXPIRES after a limited period; choose a paid plan for lasting persistence.
+#    Background workers have no free plan.
+
+databases:
+  - name: trustguard-db
+    databaseName: trustguard
+    user: trustguard
+    plan: free            # change to a paid plan (e.g. basic-256mb) for data that must outlive the free period
+
+services:
+  - type: keyvalue        # Redis-compatible: Celery broker + distributed rate limiting (transient data only)
+    name: trustguard-redis
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList: []       # private network only
+
+  - type: web
+    name: trustguard-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter
+    healthCheckPath: /health/ready
+    envVars:
+      - { key: APP_ENV, value: production }
+      - { key: SERVICE_ROLE, value: api }
+      - { key: RUN_MIGRATIONS, value: "1" }            # only the API applies Alembic migrations
+      - { key: DATABASE_URL, fromDatabase: { name: trustguard-db, property: connectionString } }
+      - { key: REDIS_URL, fromService: { type: keyvalue, name: trustguard-redis, property: connectionString } }
+      - { key: APP_SECRET_KEY, generateValue: true }
+      - { key: SESSION_SECRET, generateValue: true }
+      - { key: EMAIL_PROVIDER, value: resend }
+      - { key: RESEND_API_KEY, sync: false }
+      - { key: EMAIL_FROM, sync: false }               # e.g. TrustGuard AI <no-reply@your-verified-domain.com>
+      - { key: FRONTEND_URL, sync: false }             # https://<your-trustguard-web>.onrender.com  (no trailing slash)
+      - { key: BACKEND_URL, sync: false }              # https://<your-trustguard-api>.onrender.com
+      - { key: CORS_ORIGINS, sync: false }             # same value as FRONTEND_URL
+      - { key: FIRST_ADMIN_EMAIL, sync: false }        # the address that becomes admin when it registers
+      - { key: OTP_EXPIRY_SECONDS, value: "300" }
+      - { key: OTP_RESEND_COOLDOWN_SECONDS, value: "60" }
+      - { key: OTP_MAX_ATTEMPTS, value: "5" }
+      - { key: OTP_MAX_RESENDS, value: "5" }
+      - { key: PASSWORD_RESET_EXPIRY_SECONDS, value: "900" }
+      - { key: ACCESS_TOKEN_EXPIRE_MINUTES, value: "15" }
+      - { key: REFRESH_TOKEN_EXPIRE_DAYS, value: "7" }
+      - { key: ARTIFACT_STORAGE_BACKEND, value: s3 }
+      - { key: S3_BUCKET, sync: false }
+      - { key: S3_ENDPOINT_URL, sync: false }          # blank for AWS S3; e.g. https://<acct>.r2.cloudflarestorage.com for R2
+      - { key: S3_ACCESS_KEY_ID, sync: false }
+      - { key: S3_SECRET_ACCESS_KEY, sync: false }
+      - { key: S3_REGION, value: auto }
+      - { key: DB_POOL_SIZE, value: "5" }
+      - { key: DB_MAX_OVERFLOW, value: "5" }
+
+  - type: worker
+    name: trustguard-worker
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    dockerCommand: ./docker-entrypoint.sh worker
+    plan: starter
+    envVars:
+      - { key: APP_ENV, value: production }
+      - { key: SERVICE_ROLE, value: worker }
+      - { key: DATABASE_URL, fromDatabase: { name: trustguard-db, property: connectionString } }
+      - { key: REDIS_URL, fromService: { type: keyvalue, name: trustguard-redis, property: connectionString } }
+      - { key: APP_SECRET_KEY, generateValue: true }
+      - { key: SESSION_SECRET, generateValue: true }
+      - { key: ARTIFACT_STORAGE_BACKEND, value: s3 }
+      - { key: S3_BUCKET, sync: false }
+      - { key: S3_ENDPOINT_URL, sync: false }
+      - { key: S3_ACCESS_KEY_ID, sync: false }
+      - { key: S3_SECRET_ACCESS_KEY, sync: false }
+      - { key: S3_REGION, value: auto }
+      - { key: CELERY_CONCURRENCY, value: "2" }
+
+  - type: web
+    name: trustguard-web
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - { key: BACKEND_HOSTPORT, fromService: { type: web, name: trustguard-api, property: hostport } }
